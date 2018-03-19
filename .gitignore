@@ -1,0 +1,8 @@
+/vendor/
+/output/
+
+# for jetbrains IDE
+/.idea/
+
+# MacOS
+.DS_Store

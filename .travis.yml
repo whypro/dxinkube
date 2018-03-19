@@ -1,0 +1,17 @@
+language: go
+go:
+  - 1.9.2
+services: docker
+install: true
+script:
+  - ./hack/verify-all.sh
+  - make vendor
+  - if [[ "$TRAVIS_BRANCH" == "develop" ]]; then make testaone; else make test; fi
+  - make
+deploy:
+  - provider: script
+    skip_cleanup: true
+    script: ./hack/release.sh
+    on:
+      go: 1.9.2
+      tags: true
