@@ -16,7 +16,7 @@ BUILD_DATE = $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 GIT_VERSION = $(shell ./hack/version.sh | awk -F': ' '/^VERSION:/ {print $$2}')
 
 OUT_DIR := bin
-SRC_PREFIX := qiniu.com/account/app
+SRC_PREFIX := github.com/whypro/dxinkube/cmd
 PKGS = $(shell $(GO) list $(SRC_PREFIX)/...)
 
 # Only set Version if building a tag or VERSION is set

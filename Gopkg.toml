@@ -6,30 +6,26 @@
 #
 [[constraint]]
   name = "k8s.io/client-go"
-  version = "5.0.1"
+  version = "kubernetes-1.8.10"
 
 [[constraint]]
   name = "k8s.io/apimachinery"
-  branch = "release-1.8"
-
-[[constraint]]
-  name = "k8s.io/api"
-  branch = "release-1.8"
+  version = "kubernetes-1.8.10"
 
 [[constraint]]
   name = "k8s.io/apiserver"
-  branch = "release-1.8"
-
-[[constraint]]
-  name = "github.com/prometheus/prometheus"
-  version = "2.0.0"
+  version = "kubernetes-1.8.10"
 
 # Required by https://github.com/kubernetes/apiserver/blob/release-1.8/Godeps/Godeps.json
 [[override]]
   name = "github.com/emicklei/go-restful"
   revision = "ff4f55a206334ef123e4f79bbf348980da81ca46"
 
+[[override]]
+  name = "k8s.io/api"
+  version = "kubernetes-1.8.10"
+
 # Required by k8s.io/api.
 [[override]]
   name = "k8s.io/apiextensions-apiserver"
-  branch = "release-1.8"
+  version = "kubernetes-1.8.10"

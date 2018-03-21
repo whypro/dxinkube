@@ -1,0 +1,35 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  labels:
+    app: zk-controller
+    name: zk-controller
+  name: zk-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zk-controller
+      name: zk-controller
+  template:
+    metadata:
+      labels:
+        app: zk-controller
+        name: zk-controller
+    spec:
+      containers:
+      - image: index-dev.qiniu.io/kelibrary/zk-controller:latest
+        imagePullPolicy: Always
+        name: zk-controller
+        resources:
+          limits:
+            cpu: 100m
+            memory: 100Mi
+          requests:
+            cpu: 10m
+            memory: 10Mi
+        command:
+        - /dxinkube/bin/zk-controller
+        args:
+        - '--local-zk-addrs=local-zookeeper'
+        - '--remote-zk-addrs=remote-zookeeper'

@@ -1,5 +1,6 @@
 /vendor/
 /output/
+/bin/
 
 # for jetbrains IDE
 /.idea/
