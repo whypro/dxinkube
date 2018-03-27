@@ -2,6 +2,7 @@ package controller
 
 import (
 	"github.com/samuel/go-zookeeper/zk"
+	"github.com/golang/glog"
 )
 
 type WatchChange struct {
@@ -33,8 +34,10 @@ func (s *watchSub) loop() {
 	for {
 		select {
 		case <-refresh:
+			glog.Infof("ChildrenW %s", s.path)
 			children, _, refresh, err = s.conn.ChildrenW(s.path)
 			if err == zk.ErrConnectionClosed {
+				glog.Errorf("ErrConnectionClosed %s", s.path)
 				close(s.updates)
 				return
 			}
