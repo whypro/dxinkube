@@ -5,12 +5,15 @@ import (
 
 	"github.com/golang/glog"
 	"github.com/samuel/go-zookeeper/zk"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 )
 
 const (
-	tlbLabelName = "ke-tlb/owner"
-	zkPath       = "/dubbo"
+	tlbLabelName  = "ke-tlb/owner"
+	dubboRootPath = "/dubbo"
+
+	dubboProviderCategory = "providers"
 )
 
 type Config struct {
@@ -23,8 +26,11 @@ type Config struct {
 type ZKController struct {
 	config         *Config
 	localZKClient  *zk.Conn
-	remoteZKClient *zk.Conn
+	// remoteZKClient *zk.Conn
 	tlbController  *TLBController
+
+	desiredProviderMapper DubboProviderMapper
+	currentProviderMapper DubboProviderMapper
 }
 
 func NewZKController(config *Config) (*ZKController, error) {
@@ -34,11 +40,13 @@ func NewZKController(config *Config) (*ZKController, error) {
 		glog.Errorf("connect to zk error, addrs: %+v, err: %v", config.LocalZKAddrs, err)
 		return nil, err
 	}
+	/*
 	remoteZKClient, _, err := zk.Connect(config.RemoteZKAddrs, 10*time.Second)
 	if err != nil {
 		glog.Errorf("connect to zk error, addrs: %+v, err: %v", config.LocalZKAddrs, err)
 		return nil, err
 	}
+	*/
 
 	tlbController, err := NewTLBController(config)
 	if err != nil {
@@ -47,47 +55,19 @@ func NewZKController(config *Config) (*ZKController, error) {
 	}
 
 	zkController := &ZKController{
-		config:         config,
-		localZKClient:  localZKClient,
-		remoteZKClient: remoteZKClient,
-		tlbController:  tlbController,
+		config:                config,
+		localZKClient:         localZKClient,
+		// remoteZKClient:        remoteZKClient,
+		tlbController:         tlbController,
+		desiredProviderMapper: make(map[string]*DubboProvider),
+		currentProviderMapper: make(map[string]*DubboProvider),
 	}
 
 	return zkController, nil
 }
 
 func (c *ZKController) Run(stopCh <-chan struct{}) {
-	c.tlbController.Run(stopCh)
-	go c.watchLocal(stopCh)
-}
-
-func (c *ZKController) watchLocal(stopCh <-chan struct{}) {
-	for {
-		glog.Infof("watch %s", zkPath)
-		// changes := ChildrenWSubscribe(c.localZKClient, zkPath)
-
-		children, _, event, err := c.localZKClient.ChildrenW("/dubbo")
-		if err != nil {
-			glog.Errorf("children watch error, err: %v", err)
-			continue
-		}
-		glog.Infof("get children: %v", children)
-		select {
-		case ev := <-event:
-			if ev.Err != nil {
-				glog.Errorf("event err, %v", ev.Err)
-				continue
-			}
-			glog.Infof("watched: +%v", ev)
-		}
-
-		// c.onLocalChange(changes)
-	}
-}
-
-func (c *ZKController) onLocalChange(changes chan WatchChange) {
-	for change := range changes {
-		glog.Infof("STATE UPDATED: %+v\n", change)
-	}
-	glog.Infof("connection closed")
+	go c.tlbController.Run(stopCh)
+	// go c.watchLocal(stopCh)
+	go wait.Until(c.Sync, 10*time.Second, stopCh)
 }

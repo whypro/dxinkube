@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: t-dubbo-provider
+  labels:
+    app: dubbo-provider
+    name: dubbo-provider
+    ke-tlb/owner: dubbo-provider
+spec:
+  ports:
+  - name: dubbo
+    port: 20880
+    targetPort: 20880
+    protocol: TCP
+  selector:
+    app: dubbo-provider
+    name: dubbo-provider

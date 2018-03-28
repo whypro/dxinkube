@@ -1,0 +1,37 @@
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: dubbo-provider
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: dubbo-provider
+      name: dubbo-provider
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: dubbo-provider
+        name: dubbo-provider
+    spec:
+      containers:
+      - image: index-dev.qiniu.io/kelibrary/dubbo-docker-sample:dxinkube
+        imagePullPolicy: Always
+        name: dubbo-provider
+        resources:
+          limits:
+            cpu: 100m
+            memory: 500Mi
+          requests:
+            cpu: 10m
+            memory: 10Mi
+        ports:
+        - containerPort: 20880
+          name: dubbo
+          protocol: TCP
+      restartPolicy: Always

@@ -126,7 +126,7 @@ func (c *TLBController) RefreshTLBMapper() {
 	return
 }
 
-func (m *TLBMapper) Update(podAddrs sets.String, tlbAddr string) {
+func (m TLBMapper) Update(podAddrs sets.String, tlbAddr string) {
 	if podAddrs.Len() == 0 {
 		return
 	}
@@ -134,7 +134,7 @@ func (m *TLBMapper) Update(podAddrs sets.String, tlbAddr string) {
 	glog.Info(m)
 }
 
-func (m *TLBMapper) Delete(podAddrs sets.String) {
+func (m TLBMapper) Delete(podAddrs sets.String) {
 	if podAddrs.Len() == 0 {
 		return
 	}
@@ -142,7 +142,7 @@ func (m *TLBMapper) Delete(podAddrs sets.String) {
 	glog.Info(m)
 }
 
-func (m *TLBMapper) String() string {
+func (m TLBMapper) String() string {
 	return fmt.Sprintf("%+v", m)
 }
 
@@ -283,11 +283,10 @@ func (c *TLBController) onServiceUpdate(oldObj, newObj interface{}) {
 	return
 }
 
-/*
 
-func (c *ZKController) GetTLBAddr(podAddr string) (string, error) {
+func (c *TLBController) GetTLBAddr(podAddr string) (string, error) {
 	c.lock.RLock()
-	defer c.lock.Unlock()
+	c.lock.RUnlock()
 	tlbAddr, ok := c.tlbMapper[podAddr]
 	if !ok {
 		glog.Errorf("podIP %s is not in tlbMapper", podAddr)
@@ -295,4 +294,3 @@ func (c *ZKController) GetTLBAddr(podAddr string) (string, error) {
 	}
 	return tlbAddr, nil
 }
-*/
