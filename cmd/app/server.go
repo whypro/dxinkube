@@ -25,7 +25,7 @@ func Run(zkControllerOptions *ZKControllerOptions) (err error) {
 	<-stopCh
 	glog.Infof("shutting down http server")
 
-	glog.Infof("alert-dispatcher shutdown success")
+	glog.Infof("zk controller shutdown success")
 
 	return nil
 }

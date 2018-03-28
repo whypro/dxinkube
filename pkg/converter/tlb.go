@@ -1,4 +1,4 @@
-package controller
+package converter
 
 import (
 	"fmt"
@@ -16,7 +16,12 @@ import (
 	informersv1 "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
 	listersv1 "k8s.io/client-go/listers/core/v1"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/cache"
+)
+
+const (
+	tlbLabelName = "ke-tlb/owner"
 )
 
 // podAddr -> tlbAddr
@@ -62,20 +67,23 @@ type TLBController struct {
 	serviceLister     listersv1.ServiceLister
 	endpointsInformer informersv1.EndpointsInformer
 	serviceInformer   informersv1.ServiceInformer
+
+	tlbLabelName string
 }
 
-func NewTLBController(config *Config) (*TLBController, error) {
+func NewTLBController(kubeConfig *rest.Config, resyncPeriod time.Duration) (*TLBController, error) {
 
-	kubeClient, err := kubernetes.NewForConfig(config.KubeConfig)
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create kubernetes client")
 	}
 
-	informerFactory := informers.NewSharedInformerFactory(kubeClient, config.ResyncPeriod)
-	endpointsLister := informerFactory.Core().V1().Endpoints().Lister()
-	serviceLister := informerFactory.Core().V1().Services().Lister()
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, resyncPeriod)
+
 	endpointsInformer := informerFactory.Core().V1().Endpoints()
 	serviceInformer := informerFactory.Core().V1().Services()
+	endpointsLister := endpointsInformer.Lister()
+	serviceLister := serviceInformer.Lister()
 
 	tlbController := &TLBController{
 		kubeClient: kubeClient,
@@ -87,6 +95,8 @@ func NewTLBController(config *Config) (*TLBController, error) {
 
 		endpointsInformer: endpointsInformer,
 		serviceInformer:   serviceInformer,
+
+		tlbLabelName: tlbLabelName,
 	}
 
 	endpointsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -104,16 +114,16 @@ func NewTLBController(config *Config) (*TLBController, error) {
 }
 
 func (c *TLBController) Run(stopCh <-chan struct{}) {
-	go wait.Until(c.RefreshTLBMapper, 60*time.Second, stopCh)
 	go c.endpointsInformer.Informer().Run(stopCh)
 	go c.serviceInformer.Informer().Run(stopCh)
+	go wait.Until(c.RefreshTLBMapper, 10*time.Second, stopCh)
 }
 
 func (c *TLBController) RefreshTLBMapper() {
 	// list tlb services
 	glog.V(4).Infof("list tlb services")
 	selector := labels.NewSelector()
-	r, err := labels.NewRequirement(tlbLabelName, selection.Exists, nil)
+	r, err := labels.NewRequirement(c.tlbLabelName, selection.Exists, nil)
 	if err != nil {
 		glog.Errorf("create requirement error, err: %v", err)
 		return
@@ -287,7 +297,7 @@ func (c *TLBController) onServiceUpdate(oldObj, newObj interface{}) {
 	return
 }
 
-func (c *TLBController) GetTLBAddr(podAddr string) (string, error) {
+func (c *TLBController) ConvertAddr(podAddr string) (string, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	tlbAddr, ok := c.tlbMapper[podAddr]

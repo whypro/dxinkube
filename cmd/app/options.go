@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	defaultServerAddr = "0.0.0.0"
-	defaultServerPort = 5000
+	defaultServerAddr     = "0.0.0.0"
+	defaultServerPort     = 5000
+	dubboRootPath         = "/dubbo"
+	dubboProviderCategory = "providers"
 )
 
 type ZKControllerOptions struct {
@@ -74,10 +76,12 @@ func createZKControllerConfig(o *ZKControllerOptions) *controller.Config {
 	}
 
 	return &controller.Config{
-		KubeConfig:   kubeClientConfig,
-		ResyncPeriod: time.Minute,
-		LocalZKAddrs: o.LocalZKAddrs,
-		RemoteZKAddrs: o.RemoteZKAddrs,
+		KubeConfig:            kubeClientConfig,
+		ResyncPeriod:          5 * time.Minute,
+		LocalZKAddrs:          o.LocalZKAddrs,
+		RemoteZKAddrs:         o.RemoteZKAddrs,
+		DubboRootPath:         dubboRootPath,
+		DubboProviderCategory: dubboProviderCategory,
 	}
 }
 
