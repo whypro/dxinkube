@@ -46,7 +46,7 @@ func (p *Provider) Key() string {
 }
 
 func (p *Provider) Parse(url string) error {
-	unescapedURL, err := neturl.PathUnescape(url)
+	unescapedURL, err := neturl.QueryUnescape(url)
 	if err != nil {
 		return err
 	}

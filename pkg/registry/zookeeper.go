@@ -81,7 +81,7 @@ func (r *ZookeeperRegistry) Register(provider *dubbo.Provider) error {
 	}
 	provider.AddTimestamp()
 	path += "/"
-	path += neturl.PathEscape(provider.String())
+	path += neturl.QueryEscape(provider.String())
 	_, err = conn.Create(path, []byte(provider.Addr), zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
 	if err != nil {
 		glog.Errorf("create path %s error, err: %v", path, err)
