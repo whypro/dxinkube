@@ -15,3 +15,5 @@ spec:
   selector:
     app: dubbo-provider
     name: dubbo-provider
+  externalTrafficPolicy: Cluster
+  type: LoadBalancer

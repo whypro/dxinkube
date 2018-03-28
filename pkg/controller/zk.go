@@ -135,7 +135,7 @@ func (c *ZKController) Sync() {
 }
 
 func (c *ZKController) ListProviders() error {
-	glog.Infof("list providers")
+	glog.V(4).Infof("list providers")
 	rootPath := dubboRootPath
 	children, _, err := c.localZKClient.Children(rootPath)
 	if err != nil {

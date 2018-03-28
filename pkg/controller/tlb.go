@@ -3,6 +3,7 @@ package controller
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/pkg/errors"
@@ -10,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/selection"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/informers"
 	informersv1 "k8s.io/client-go/informers/core/v1"
 	"k8s.io/client-go/kubernetes"
@@ -19,6 +21,36 @@ import (
 
 // podAddr -> tlbAddr
 type TLBMapper map[string]string
+
+func (m TLBMapper) Update(podAddrs sets.String, tlbAddr string) {
+	if podAddrs.Len() == 0 || tlbAddr == "" {
+		return
+	}
+	glog.V(4).Infof("update tlb mapper, podAddrs: %s, tlbAddr: %s", podAddrs, tlbAddr)
+	for podAddr := range podAddrs {
+		m[podAddr] = tlbAddr
+	}
+}
+
+func (m TLBMapper) Delete(podAddrs sets.String) {
+	if podAddrs.Len() == 0 {
+		return
+	}
+	glog.V(4).Infof("delete tlb mapper, podAddrs: %s", podAddrs)
+	for podAddr := range podAddrs {
+		delete(m, podAddr)
+	}
+}
+
+/*
+func (m TLBMapper) String() string {
+	var s string
+	for k, v := range m {
+		s += fmt.Sprintf("%s: %s\n", k, v)
+	}
+	return s
+}
+*/
 
 type TLBController struct {
 	kubeClient *kubernetes.Clientset
@@ -46,9 +78,13 @@ func NewTLBController(config *Config) (*TLBController, error) {
 	serviceInformer := informerFactory.Core().V1().Services()
 
 	tlbController := &TLBController{
-		endpointsLister:   endpointsLister,
-		serviceLister:     serviceLister,
-		kubeClient:        kubeClient,
+		kubeClient: kubeClient,
+
+		tlbMapper: make(TLBMapper),
+
+		endpointsLister: endpointsLister,
+		serviceLister:   serviceLister,
+
 		endpointsInformer: endpointsInformer,
 		serviceInformer:   serviceInformer,
 	}
@@ -68,20 +104,22 @@ func NewTLBController(config *Config) (*TLBController, error) {
 }
 
 func (c *TLBController) Run(stopCh <-chan struct{}) {
+	go wait.Until(c.RefreshTLBMapper, 60*time.Second, stopCh)
 	go c.endpointsInformer.Informer().Run(stopCh)
 	go c.serviceInformer.Informer().Run(stopCh)
 }
 
 func (c *TLBController) RefreshTLBMapper() {
 	// list tlb services
+	glog.V(4).Infof("list tlb services")
 	selector := labels.NewSelector()
-	r, err := labels.NewRequirement(tlbLabelName, selection.Exists, make([]string, 0))
+	r, err := labels.NewRequirement(tlbLabelName, selection.Exists, nil)
 	if err != nil {
 		glog.Errorf("create requirement error, err: %v", err)
 		return
 	}
 	selector.Add(*r)
-	services, err := c.serviceLister.Services("").List(selector)
+	services, err := c.serviceLister.List(selector)
 	if err != nil {
 		glog.Errorf("list services error, err: %v", err)
 		return
@@ -89,61 +127,29 @@ func (c *TLBController) RefreshTLBMapper() {
 
 	// get tlb address
 	for _, svc := range services {
-		if len(svc.Status.LoadBalancer.Ingress) == 0 {
-			glog.Warningf("tlb is not initialized yet, service: %s", svc.Name)
+		if !isTLBService(svc) {
+			glog.V(5).Infof("skip non-tlb service, ns: %s, name: %s", svc.Namespace, svc.Name)
 			continue
 		}
-		// assert one service just has one ingress ip
-		var tlbAddr string
-		for _, ingress := range svc.Status.LoadBalancer.Ingress {
-			for _, port := range svc.Spec.Ports {
-				tlbAddr = fmt.Sprintf("%s:%d", ingress.IP, port.Port)
-			}
-		}
+		tlbAddr := getTLBAddrFromService(svc)
 		if tlbAddr == "" {
-			glog.Warningf("failed to get ips or ports, service: %s", svc.Name)
+			glog.V(4).Infof("skip not initialized tlb service, ns: %s, name: %s", svc.Namespace, svc.Name)
 			continue
 		}
-
 		// get endpoints of the service
-		ep, err := c.endpointsLister.Endpoints("").Get(svc.Name)
+		ep, err := c.endpointsLister.Endpoints(svc.Namespace).Get(svc.Name)
 		if err != nil {
 			glog.Errorf("get endpoints of service: %s error, err: %v", svc.Name, err)
 			continue
 		}
-		// get pod addresses set
-		podAddrs := make([]string, 0)
-		for _, subset := range ep.Subsets {
-			for _, ip := range subset.Addresses {
-				for _, port := range subset.Ports {
-					podAddr := fmt.Sprintf("%s:%d", ip.IP, port.Port)
-					podAddrs = append(podAddrs, podAddr)
-				}
-			}
-		}
+		glog.V(4).Infof("got valid service, ns: %s, name: %s", svc.Namespace, svc.Name)
+		podAddrs := getPodAddrsFromEndpoints(ep)
+		c.lock.Lock()
+		c.tlbMapper.Update(podAddrs, tlbAddr)
+		c.lock.Unlock()
 	}
 
 	return
-}
-
-func (m TLBMapper) Update(podAddrs sets.String, tlbAddr string) {
-	if podAddrs.Len() == 0 {
-		return
-	}
-	glog.Infof("update tlb mapper")
-	glog.Info(m)
-}
-
-func (m TLBMapper) Delete(podAddrs sets.String) {
-	if podAddrs.Len() == 0 {
-		return
-	}
-	glog.Infof("delete tlb mapper")
-	glog.Info(m)
-}
-
-func (m TLBMapper) String() string {
-	return fmt.Sprintf("%+v", m)
 }
 
 func getPodAddrsFromEndpoints(ep *v1.Endpoints) sets.String {
@@ -151,7 +157,7 @@ func getPodAddrsFromEndpoints(ep *v1.Endpoints) sets.String {
 	for _, subset := range ep.Subsets {
 		for _, ip := range subset.Addresses {
 			for _, port := range subset.Ports {
-				podAddr := fmt.Sprintf("%s:%d", ip, port)
+				podAddr := fmt.Sprintf("%s:%d", ip.IP, port.Port)
 				podAddrs.Insert(podAddr)
 			}
 		}
@@ -172,7 +178,7 @@ func (c *TLBController) onEndpointsAdd(obj interface{}) {
 		return
 	}
 	if !isTLBEndpoints(ep) {
-		glog.V(4).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
+		glog.V(5).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
 		return
 	}
 	addrs := getPodAddrsFromEndpoints(ep)
@@ -206,7 +212,7 @@ func (c *TLBController) onEndpointsUpdate(oldObj, newObj interface{}) {
 		return
 	}
 	if !isTLBEndpoints(oldEp) {
-		glog.V(4).Infof("skip endpoints, ns: %s, name: %s", oldEp.Namespace, oldEp.Name)
+		glog.V(5).Infof("skip endpoints, ns: %s, name: %s", oldEp.Namespace, oldEp.Name)
 		return
 	}
 	newEp, ok := newObj.(*v1.Endpoints)
@@ -228,7 +234,7 @@ func (c *TLBController) onEndpointsDelete(obj interface{}) {
 		return
 	}
 	if !isTLBEndpoints(ep) {
-		glog.V(4).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
+		glog.V(5).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
 		return
 	}
 	addrs := getPodAddrsFromEndpoints(ep)
@@ -256,7 +262,7 @@ func (c *TLBController) onServiceUpdate(oldObj, newObj interface{}) {
 		return
 	}
 	if !isTLBService(oldSvc) {
-		glog.V(4).Infof("skip service, ns: %s, name: %s", oldSvc.Namespace, oldSvc.Name)
+		glog.V(5).Infof("skip service, ns: %s, name: %s", oldSvc.Namespace, oldSvc.Name)
 		return
 	}
 	newSvc, ok := newObj.(*v1.Service)
@@ -267,26 +273,23 @@ func (c *TLBController) onServiceUpdate(oldObj, newObj interface{}) {
 
 	tlbAddr := getTLBAddrFromService(newSvc)
 	if tlbAddr != "" && getTLBAddrFromService(oldSvc) == "" {
-
 		// get endpoints of the service
-		ep, err := c.endpointsLister.Endpoints("").Get(newSvc.Name)
+		ep, err := c.endpointsLister.Endpoints(newSvc.Namespace).Get(newSvc.Name)
 		if err != nil {
 			glog.Errorf("get endpoints of service: %s error, err: %v", newSvc.Name, err)
 			return
 		}
 		podAddrs := getPodAddrsFromEndpoints(ep)
 		c.lock.Lock()
-		defer c.lock.Lock()
+		defer c.lock.Unlock()
 		c.tlbMapper.Update(podAddrs, tlbAddr)
 	}
-	glog.Info(c.tlbMapper)
 	return
 }
 
-
 func (c *TLBController) GetTLBAddr(podAddr string) (string, error) {
 	c.lock.RLock()
-	c.lock.RUnlock()
+	defer c.lock.RUnlock()
 	tlbAddr, ok := c.tlbMapper[podAddr]
 	if !ok {
 		glog.Errorf("podIP %s is not in tlbMapper", podAddr)
