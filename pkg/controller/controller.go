@@ -6,8 +6,8 @@ import (
 	"github.com/golang/glog"
 	"k8s.io/client-go/rest"
 
-	"github.com/whypro/dxinkube/pkg/registry"
 	"github.com/whypro/dxinkube/pkg/converter"
+	"github.com/whypro/dxinkube/pkg/registry"
 )
 
 type Config struct {

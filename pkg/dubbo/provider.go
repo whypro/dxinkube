@@ -4,6 +4,7 @@ import (
 	"fmt"
 	neturl "net/url"
 	"strings"
+	"time"
 )
 
 type Provider struct {
@@ -33,6 +34,11 @@ func (p *Provider) query() string {
 
 func (p *Provider) String() string {
 	return p.Url() + "?" + p.query()
+}
+
+func (p *Provider) AddTimestamp() {
+	ts := fmt.Sprintf("%d", time.Now().Unix())
+	p.params["timestamp"] = ts
 }
 
 func (p *Provider) Key() string {

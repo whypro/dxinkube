@@ -149,7 +149,7 @@ func (c *TLBController) RefreshTLBMapper() {
 		// get endpoints of the service
 		ep, err := c.endpointsLister.Endpoints(svc.Namespace).Get(svc.Name)
 		if err != nil {
-			glog.Errorf("get endpoints of service: %s error, err: %v", svc.Name, err)
+			glog.Warningf("get endpoints of service: %s error, err: %v", svc.Name, err)
 			continue
 		}
 		glog.V(4).Infof("got valid service, ns: %s, name: %s", svc.Namespace, svc.Name)

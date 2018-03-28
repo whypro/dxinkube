@@ -9,7 +9,7 @@ cd $ROOT
 
 gofmt=$(which gofmt)
 
-PKGS=$(go list qiniu.com/account/app/...)
+PKGS=$(go list github.com/whypro/dxinkube/pkg/...)
 
 # gofmt exits with non-zero exit code if it finds a problem unrelated to
 # formatting (e.g., a file does not parse correctly). Without "|| true" this

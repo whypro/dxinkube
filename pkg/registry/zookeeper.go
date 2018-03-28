@@ -3,6 +3,7 @@ package registry
 import (
 	"fmt"
 	neturl "net/url"
+	"strings"
 	"time"
 
 	"github.com/golang/glog"
@@ -41,15 +42,47 @@ func NewZookeeperRegistry(servers []string) (*ZookeeperRegistry, error) {
 	return registry, nil
 }
 
+func (r *ZookeeperRegistry) ensurePath(path string) error {
+	nodes := strings.Split(path, "/")
+	var currentPath string
+	for _, node := range nodes {
+		if node == "" {
+			continue
+		}
+		currentPath += "/"
+		currentPath += node
+		exists, _, err := r.conn.Exists(currentPath)
+		if err != nil {
+			glog.Errorf("check path %s exists error, %v", currentPath, err)
+			return err
+		}
+		if exists == false {
+			_, err := r.conn.Create(currentPath, []byte(""), 0, zk.WorldACL(zk.PermAll))
+			if err != nil {
+				glog.Errorf("create path %s error, %v", currentPath, err)
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func (r *ZookeeperRegistry) Register(provider *dubbo.Provider) error {
 	conn, _, err := zk.Connect(r.servers, 10*time.Second)
 	if err != nil {
 		glog.Errorf("connect to server %v error, err: %v", r.servers, err)
 		return err
 	}
-	path := dubboRootPath + "/" + provider.Service + "/" + dubboProviderCategory + "/" + provider.String()
-	path = neturl.PathEscape(path)
-	_, err = conn.Create(path, []byte(provider.Addr), zk.FlagEphemeral, nil)
+	path := dubboRootPath + "/" + provider.Service + "/" + dubboProviderCategory
+	err = r.ensurePath(path)
+	if err != nil {
+		glog.Errorf("ensure path %s error, %v", path, err)
+		return err
+	}
+	provider.AddTimestamp()
+	path += "/"
+	path += neturl.PathEscape(provider.String())
+	_, err = conn.Create(path, []byte(provider.Addr), zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
 	if err != nil {
 		glog.Errorf("create path %s error, err: %v", path, err)
 		return err

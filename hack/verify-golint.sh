@@ -11,7 +11,7 @@ if ! which golint > /dev/null; then
     go get -u github.com/golang/lint/golint
 fi
 
-PKGS=$(go list qiniu.com/account/app/...)
+PKGS=$(go list github.com/whypro/dxinkube/pkg/...)
 
 ret=0
 golint -set_exit_status ${PKGS[*]} || ret=$?
