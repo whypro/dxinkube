@@ -1,7 +1,6 @@
 package registry
 
 import (
-	"fmt"
 	neturl "net/url"
 	"strings"
 	"time"
@@ -76,6 +75,7 @@ func (r *ZookeeperRegistry) Register(provider *dubbo.Provider) error {
 	path := dubboRootPath + "/" + provider.Service + "/" + dubboProviderCategory
 	err = r.ensurePath(path)
 	if err != nil {
+		conn.Close()
 		glog.Errorf("ensure path %s error, %v", path, err)
 		return err
 	}
@@ -85,20 +85,24 @@ func (r *ZookeeperRegistry) Register(provider *dubbo.Provider) error {
 	_, err = conn.Create(path, []byte(provider.Addr), zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
 	if err != nil {
 		glog.Errorf("create path %s error, err: %v", path, err)
+		conn.Close()
 		return err
 	}
 	r.ephemeralConnPool[provider.Key()] = conn
 	return nil
 }
 
-func (r *ZookeeperRegistry) UnRegister(provider *dubbo.Provider) error {
+func (r *ZookeeperRegistry) UnRegister(provider *dubbo.Provider) {
 	conn, ok := r.ephemeralConnPool[provider.Key()]
 	if !ok {
-		glog.Errorf("get provider error, key: %s", provider.Key())
-		return fmt.Errorf("provider is not exists")
+		glog.Warningf("get provider error, key: %s", provider.Key())
+		return
 	}
-	conn.Close()
-	return nil
+	if conn != nil {
+		conn.Close()
+	}
+	delete(r.ephemeralConnPool, provider.Key())
+	return
 }
 
 func (r *ZookeeperRegistry) ListProviders() ([]string, error) {

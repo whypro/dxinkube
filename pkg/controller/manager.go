@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/golang/glog"
@@ -52,14 +53,13 @@ func (m *ProviderManager) Parse(url string) (string, error) {
 	return provider.Key(), nil
 }
 
-func (m *ProviderManager) register(key string) {
+func (m *ProviderManager) register(key string) error {
 	provider, ok := m.mapper[key]
 	if !ok {
 		glog.Errorf("provider is not exists, %s", key)
-		return
+		return fmt.Errorf("provider is not exists")
 	}
-	m.remoteRegistry.Register(provider)
-	return
+	return m.remoteRegistry.Register(provider)
 }
 
 func (m *ProviderManager) unRegister(key string) {
@@ -92,15 +92,20 @@ func (m *ProviderManager) Refresh() {
 	created := m.desiredProviders.Difference(m.currentProviders)
 	deleted := m.currentProviders.Difference(m.desiredProviders)
 
+	m.currentProviders = m.desiredProviders
+	m.desiredProviders = sets.NewString()
+
 	for provider := range created {
-		m.register(provider)
+		err := m.register(provider)
+		if err != nil {
+			glog.Warningf("register provider error, %v", err)
+			m.currentProviders.Delete(provider)
+			continue
+		}
 	}
 	for provider := range deleted {
 		m.unRegister(provider)
 	}
-
-	m.currentProviders = m.desiredProviders
-	m.desiredProviders = sets.NewString()
 }
 
 func (m *ProviderManager) Run(stopCh <-chan struct{}) {
