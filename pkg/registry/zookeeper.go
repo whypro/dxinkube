@@ -12,31 +12,27 @@ import (
 )
 
 const (
-	dubboRootPath         = "/dubbo"
-	dubboProviderCategory = "providers"
+	dubboRootPath             = "/dubbo"
+	dubboProviderCategory     = "providers"
+	dubboConfiguratorCategory = "configurators"
+	defaultConnectionTimeout  = 10 * time.Second
 )
 
 type ZookeeperRegistry struct {
-	servers           []string
-	registerQueue     []*dubbo.Provider
-	unRegisterQueue   []*dubbo.Provider
-	ephemeralConnPool map[string]*zk.Conn
-	conn              *zk.Conn
+	servers []string
+	conn    *zk.Conn
 }
 
 func NewZookeeperRegistry(servers []string) (*ZookeeperRegistry, error) {
-	conn, _, err := zk.Connect(servers, 10*time.Second)
+	conn, _, err := zk.Connect(servers, defaultConnectionTimeout)
 	if err != nil {
 		glog.Errorf("connect to zk error, addrs: %+v, err: %v", servers, err)
 		return nil, err
 	}
 
 	registry := &ZookeeperRegistry{
-		servers:           servers,
-		registerQueue:     make([]*dubbo.Provider, 0),
-		unRegisterQueue:   make([]*dubbo.Provider, 0),
-		ephemeralConnPool: make(map[string]*zk.Conn),
-		conn:              conn,
+		servers: servers,
+		conn:    conn,
 	}
 	return registry, nil
 }
@@ -66,43 +62,89 @@ func (r *ZookeeperRegistry) ensurePath(path string) error {
 	return nil
 }
 
+func (r *ZookeeperRegistry) deletePath(path string) error {
+	nodes, _, err := r.conn.Children(path)
+	if err != nil {
+		return err
+	}
+	if len(nodes) == 0 {
+		return nil
+	}
+	for _, node := range nodes {
+		r.deletePath(path + "/" + node)
+	}
+	return r.conn.Delete(path, 0)
+}
+
+func (r *ZookeeperRegistry) getProvidersPath(provider *dubbo.Provider) string {
+	return dubboRootPath + "/" + provider.Service + "/" + dubboProviderCategory
+}
+
+func (r *ZookeeperRegistry) getConfiguratorsPath(provider *dubbo.Provider) string {
+	return dubboRootPath + "/" + provider.Service + "/" + dubboConfiguratorCategory
+}
+
+func (r *ZookeeperRegistry) getProviderPath(provider *dubbo.Provider) string {
+	return r.getProvidersPath(provider) + "/" + neturl.QueryEscape(provider.String())
+}
+
+func (r *ZookeeperRegistry) getServicePath(provider *dubbo.Provider) string {
+	return dubboRootPath + "/" + provider.Service
+}
+
 func (r *ZookeeperRegistry) Register(provider *dubbo.Provider) error {
-	conn, _, err := zk.Connect(r.servers, 10*time.Second)
+	providersPath := r.getProvidersPath(provider)
+	err := r.ensurePath(providersPath)
 	if err != nil {
-		glog.Errorf("connect to server %v error, err: %v", r.servers, err)
+		glog.Errorf("ensure path %s error, %v", providersPath, err)
 		return err
 	}
-	path := dubboRootPath + "/" + provider.Service + "/" + dubboProviderCategory
-	err = r.ensurePath(path)
+	configuratorPath := r.getConfiguratorsPath(provider)
+	err = r.ensurePath(configuratorPath)
 	if err != nil {
-		conn.Close()
-		glog.Errorf("ensure path %s error, %v", path, err)
+		glog.Errorf("ensure path %s error, %v", configuratorPath, err)
 		return err
 	}
-	provider.AddTimestamp()
-	path += "/"
-	path += neturl.QueryEscape(provider.String())
-	_, err = conn.Create(path, []byte(provider.Addr), zk.FlagEphemeral, zk.WorldACL(zk.PermAll))
+	path := r.getProviderPath(provider)
+	_, err = r.conn.Create(path, []byte(provider.Addr), 0, zk.WorldACL(zk.PermAll))
 	if err != nil {
 		glog.Errorf("create path %s error, err: %v", path, err)
-		conn.Close()
 		return err
 	}
-	r.ephemeralConnPool[provider.Key()] = conn
 	return nil
 }
 
-func (r *ZookeeperRegistry) UnRegister(provider *dubbo.Provider) {
-	conn, ok := r.ephemeralConnPool[provider.Key()]
-	if !ok {
-		glog.Warningf("get provider error, key: %s", provider.Key())
-		return
+func (r *ZookeeperRegistry) checkEmpty(path string) (bool, error) {
+	node, _, err := r.conn.Children(path)
+	if err != nil {
+		return false, err
 	}
-	if conn != nil {
-		conn.Close()
+	if len(node) != 0 {
+		return false, nil
 	}
-	delete(r.ephemeralConnPool, provider.Key())
-	return
+	return true, nil
+}
+
+func (r *ZookeeperRegistry) UnRegister(provider *dubbo.Provider) error {
+	path := r.getProviderPath(provider)
+	err := r.conn.Delete(path, 0)
+	if err != nil {
+		glog.Errorf("delete path %s error, err: %v", path, err)
+		return err
+	}
+
+	providersPath := r.getProvidersPath(provider)
+	isEmpty, err := r.checkEmpty(providersPath)
+	if err != nil {
+		glog.Warningf("check path empty error, path: %s, err: %v", providersPath, err)
+		return nil
+	}
+	if isEmpty {
+		servicePath := r.getServicePath(provider)
+		_ = r.deletePath(servicePath)
+	}
+
+	return nil
 }
 
 func (r *ZookeeperRegistry) ListProviders() ([]string, error) {

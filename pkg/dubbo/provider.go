@@ -3,6 +3,7 @@ package dubbo
 import (
 	"fmt"
 	neturl "net/url"
+	"sort"
 	"strings"
 	"time"
 )
@@ -25,9 +26,15 @@ func (p *Provider) Url() string {
 }
 
 func (p *Provider) query() string {
+	sortedKeys := make([]string, 0, len(p.params))
+	for k := range p.params {
+		sortedKeys = append(sortedKeys, k)
+	}
+	sort.Strings(sortedKeys)
+
 	paramsSlice := make([]string, 0, len(p.params))
-	for k, v := range p.params {
-		paramsSlice = append(paramsSlice, fmt.Sprintf("%s=%s", k, v))
+	for _, k := range sortedKeys {
+		paramsSlice = append(paramsSlice, fmt.Sprintf("%s=%s", k, p.params[k]))
 	}
 	return strings.Join(paramsSlice, "&")
 }
@@ -36,7 +43,7 @@ func (p *Provider) String() string {
 	return p.Url() + "?" + p.query()
 }
 
-func (p *Provider) AddTimestamp() {
+func (p *Provider) SetTimestamp() {
 	ts := fmt.Sprintf("%d", time.Now().Unix())
 	p.params["timestamp"] = ts
 }
@@ -61,12 +68,7 @@ func (p *Provider) Parse(url string) error {
 	for _, param := range params {
 		pSlice := strings.Split(param, "=")
 		k, v := pSlice[0], pSlice[1]
-		if k == "timestamp" {
-			continue
-		}
 		p.params[k] = v
 	}
-	// glog.Info(url)
-	// glog.Info(p)
 	return nil
 }
