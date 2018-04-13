@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/golang/glog"
 	"github.com/spf13/pflag"
@@ -11,14 +12,22 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 
 	"github.com/whypro/dxinkube/pkg/controller"
-	"time"
+	"github.com/whypro/dxinkube/pkg/converter"
+	"github.com/whypro/dxinkube/pkg/registry"
 )
 
 const (
-	defaultServerAddr     = "0.0.0.0"
-	defaultServerPort     = 5000
-	dubboRootPath         = "/dubbo"
-	dubboProviderCategory = "providers"
+	defaultServerAddr = "0.0.0.0"
+	defaultServerPort = 5000
+)
+
+const (
+	dubboRootPath             = "/dubbo"
+	dubboProviderCategory     = "providers"
+	dubboConfiguratorCategory = "configurators"
+	zkConnectionTimeout       = 10 * time.Second
+	resyncPeriod              = 5 * time.Minute
+	tlbLabelName              = "ke-tlb/owner"
 )
 
 type ZKControllerOptions struct {
@@ -31,6 +40,8 @@ type ZKControllerOptions struct {
 
 	LocalZKAddrs  []string `json:"local_zk_addrs"`
 	RemoteZKAddrs []string `json:"remote_zk_addrs"`
+
+	Namespace string `json:"namespace"`
 }
 
 func NewZKControllerOptions() *ZKControllerOptions {
@@ -54,6 +65,7 @@ func (o *ZKControllerOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringSliceVar(&o.LocalZKAddrs, "local-zk-addrs", o.LocalZKAddrs, "")
 	fs.StringSliceVar(&o.RemoteZKAddrs, "remote-zk-addrs", o.RemoteZKAddrs, "")
 
+	fs.StringVar(&o.Namespace, "namespace", o.Namespace, "")
 }
 
 func createZKControllerConfig(o *ZKControllerOptions) *controller.Config {
@@ -76,12 +88,26 @@ func createZKControllerConfig(o *ZKControllerOptions) *controller.Config {
 	}
 
 	return &controller.Config{
-		KubeConfig:            kubeClientConfig,
-		ResyncPeriod:          5 * time.Minute,
-		LocalZKAddrs:          o.LocalZKAddrs,
-		RemoteZKAddrs:         o.RemoteZKAddrs,
-		DubboRootPath:         dubboRootPath,
-		DubboProviderCategory: dubboProviderCategory,
+		TLBConfig: &converter.TLBControllerConfig{
+			KubeConfig:   kubeClientConfig,
+			TLBLabelName: tlbLabelName,
+			ResyncPeriod: resyncPeriod,
+			Namespace:    o.Namespace,
+		},
+		LocalZKConfig: &registry.ZookeeperConfig{
+			ServerAddrs:               o.LocalZKAddrs,
+			DubboRootPath:             dubboRootPath,
+			DubboProviderCategory:     dubboProviderCategory,
+			DubboConfiguratorCategory: dubboConfiguratorCategory,
+			ConnectionTimeout:         zkConnectionTimeout,
+		},
+		RemoteZKConfig: &registry.ZookeeperConfig{
+			ServerAddrs:               o.RemoteZKAddrs,
+			DubboRootPath:             dubboRootPath,
+			DubboProviderCategory:     dubboProviderCategory,
+			DubboConfiguratorCategory: dubboConfiguratorCategory,
+			ConnectionTimeout:         zkConnectionTimeout,
+		},
 	}
 }
 

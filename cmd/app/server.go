@@ -2,9 +2,9 @@ package app
 
 import (
 	"github.com/golang/glog"
+	"k8s.io/apiserver/pkg/server"
 
 	"github.com/whypro/dxinkube/pkg/controller"
-	"k8s.io/apiserver/pkg/server"
 )
 
 func Run(zkControllerOptions *ZKControllerOptions) (err error) {

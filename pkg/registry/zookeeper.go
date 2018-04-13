@@ -11,28 +11,29 @@ import (
 	"github.com/whypro/dxinkube/pkg/dubbo"
 )
 
-const (
-	dubboRootPath             = "/dubbo"
-	dubboProviderCategory     = "providers"
-	dubboConfiguratorCategory = "configurators"
-	defaultConnectionTimeout  = 10 * time.Second
-)
-
-type ZookeeperRegistry struct {
-	servers []string
-	conn    *zk.Conn
+type ZookeeperConfig struct {
+	ServerAddrs               []string
+	DubboRootPath             string
+	DubboProviderCategory     string
+	DubboConfiguratorCategory string
+	ConnectionTimeout         time.Duration
 }
 
-func NewZookeeperRegistry(servers []string) (*ZookeeperRegistry, error) {
-	conn, _, err := zk.Connect(servers, defaultConnectionTimeout)
+type ZookeeperRegistry struct {
+	config *ZookeeperConfig
+	conn   *zk.Conn
+}
+
+func NewZookeeperRegistry(config *ZookeeperConfig) (*ZookeeperRegistry, error) {
+	conn, _, err := zk.Connect(config.ServerAddrs, config.ConnectionTimeout)
 	if err != nil {
-		glog.Errorf("connect to zk error, addrs: %+v, err: %v", servers, err)
+		glog.Errorf("connect to zk error, addrs: %+v, err: %v", config.ServerAddrs, err)
 		return nil, err
 	}
 
 	registry := &ZookeeperRegistry{
-		servers: servers,
-		conn:    conn,
+		config: config,
+		conn:   conn,
 	}
 	return registry, nil
 }
@@ -62,26 +63,27 @@ func (r *ZookeeperRegistry) ensurePath(path string) error {
 	return nil
 }
 
-func (r *ZookeeperRegistry) deletePath(path string) error {
+func (r *ZookeeperRegistry) deletePath(path string) {
 	nodes, _, err := r.conn.Children(path)
 	if err != nil {
-		return err
+		return
 	}
-	if len(nodes) == 0 {
-		return nil
+	if len(nodes) > 0 {
+		for _, node := range nodes {
+			r.deletePath(path + "/" + node)
+		}
 	}
-	for _, node := range nodes {
-		r.deletePath(path + "/" + node)
-	}
-	return r.conn.Delete(path, 0)
+	glog.V(5).Infof("deleting path %s", path)
+	_ = r.conn.Delete(path, 0)
+	return
 }
 
 func (r *ZookeeperRegistry) getProvidersPath(provider *dubbo.Provider) string {
-	return dubboRootPath + "/" + provider.Service + "/" + dubboProviderCategory
+	return r.config.DubboRootPath + "/" + provider.Service + "/" + r.config.DubboProviderCategory
 }
 
 func (r *ZookeeperRegistry) getConfiguratorsPath(provider *dubbo.Provider) string {
-	return dubboRootPath + "/" + provider.Service + "/" + dubboConfiguratorCategory
+	return r.config.DubboRootPath + "/" + provider.Service + "/" + r.config.DubboConfiguratorCategory
 }
 
 func (r *ZookeeperRegistry) getProviderPath(provider *dubbo.Provider) string {
@@ -89,7 +91,7 @@ func (r *ZookeeperRegistry) getProviderPath(provider *dubbo.Provider) string {
 }
 
 func (r *ZookeeperRegistry) getServicePath(provider *dubbo.Provider) string {
-	return dubboRootPath + "/" + provider.Service
+	return r.config.DubboRootPath + "/" + provider.Service
 }
 
 func (r *ZookeeperRegistry) Register(provider *dubbo.Provider) error {
@@ -141,15 +143,15 @@ func (r *ZookeeperRegistry) UnRegister(provider *dubbo.Provider) error {
 	}
 	if isEmpty {
 		servicePath := r.getServicePath(provider)
-		_ = r.deletePath(servicePath)
+		glog.V(4).Infof("path is empty, deleting service path %s", servicePath)
+		r.deletePath(servicePath)
 	}
 
 	return nil
 }
 
 func (r *ZookeeperRegistry) ListProviders() ([]string, error) {
-	glog.V(4).Infof("list providers")
-	rootPath := dubboRootPath
+	rootPath := r.config.DubboRootPath
 	children, _, err := r.conn.Children(rootPath)
 	if err != nil {
 		glog.Errorf("get children for path %s error, err: %v", rootPath, err)
@@ -158,8 +160,12 @@ func (r *ZookeeperRegistry) ListProviders() ([]string, error) {
 
 	providers := make([]string, 0)
 	for _, service := range children {
-		providersPath := rootPath + "/" + service + "/" + dubboProviderCategory
-
+		providersPath := rootPath + "/" + service + "/" + r.config.DubboProviderCategory
+		exists, _, err := r.conn.Exists(providersPath)
+		if !exists {
+			glog.Warningf("path not exists, %s", providersPath)
+			continue
+		}
 		children, _, err := r.conn.Children(providersPath)
 		if err != nil {
 			glog.Errorf("get children for path %s error, err: %v", providersPath, err)

@@ -20,10 +20,6 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-const (
-	tlbLabelName = "ke-tlb/owner"
-)
-
 // podAddr -> tlbAddr
 type TLBMapper map[string]string
 
@@ -47,17 +43,15 @@ func (m TLBMapper) Delete(podAddrs sets.String) {
 	}
 }
 
-/*
-func (m TLBMapper) String() string {
-	var s string
-	for k, v := range m {
-		s += fmt.Sprintf("%s: %s\n", k, v)
-	}
-	return s
+type TLBControllerConfig struct {
+	KubeConfig   *rest.Config
+	TLBLabelName string
+	ResyncPeriod time.Duration
+	Namespace    string
 }
-*/
 
 type TLBController struct {
+	config     *TLBControllerConfig
 	kubeClient *kubernetes.Clientset
 
 	tlbMapper TLBMapper
@@ -67,18 +61,16 @@ type TLBController struct {
 	serviceLister     listersv1.ServiceLister
 	endpointsInformer informersv1.EndpointsInformer
 	serviceInformer   informersv1.ServiceInformer
-
-	tlbLabelName string
 }
 
-func NewTLBController(kubeConfig *rest.Config, resyncPeriod time.Duration) (*TLBController, error) {
+func NewTLBController(config *TLBControllerConfig) (*TLBController, error) {
 
-	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	kubeClient, err := kubernetes.NewForConfig(config.KubeConfig)
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to create kubernetes client")
 	}
 
-	informerFactory := informers.NewSharedInformerFactory(kubeClient, resyncPeriod)
+	informerFactory := informers.NewSharedInformerFactory(kubeClient, config.ResyncPeriod)
 
 	endpointsInformer := informerFactory.Core().V1().Endpoints()
 	serviceInformer := informerFactory.Core().V1().Services()
@@ -86,17 +78,15 @@ func NewTLBController(kubeConfig *rest.Config, resyncPeriod time.Duration) (*TLB
 	serviceLister := serviceInformer.Lister()
 
 	tlbController := &TLBController{
+		config:     config,
 		kubeClient: kubeClient,
 
 		tlbMapper: make(TLBMapper),
 
-		endpointsLister: endpointsLister,
-		serviceLister:   serviceLister,
-
+		endpointsLister:   endpointsLister,
+		serviceLister:     serviceLister,
 		endpointsInformer: endpointsInformer,
 		serviceInformer:   serviceInformer,
-
-		tlbLabelName: tlbLabelName,
 	}
 
 	endpointsInformer.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -123,13 +113,13 @@ func (c *TLBController) RefreshTLBMapper() {
 	// list tlb services
 	glog.V(4).Infof("list tlb services")
 	selector := labels.NewSelector()
-	r, err := labels.NewRequirement(c.tlbLabelName, selection.Exists, nil)
+	r, err := labels.NewRequirement(c.config.TLBLabelName, selection.Exists, nil)
 	if err != nil {
 		glog.Errorf("create requirement error, err: %v", err)
 		return
 	}
 	selector.Add(*r)
-	services, err := c.serviceLister.List(selector)
+	services, err := c.serviceLister.Services(c.config.Namespace).List(selector)
 	if err != nil {
 		glog.Errorf("list services error, err: %v", err)
 		return
@@ -137,19 +127,19 @@ func (c *TLBController) RefreshTLBMapper() {
 
 	// get tlb address
 	for _, svc := range services {
-		if !isTLBService(svc) {
-			glog.V(5).Infof("skip non-tlb service, ns: %s, name: %s", svc.Namespace, svc.Name)
+		if !c.isTLBService(svc) {
+			glog.V(7).Infof("skip non-tlb service, ns: %s, name: %s", svc.Namespace, svc.Name)
 			continue
 		}
 		tlbAddr := getTLBAddrFromService(svc)
 		if tlbAddr == "" {
-			glog.V(4).Infof("skip not initialized tlb service, ns: %s, name: %s", svc.Namespace, svc.Name)
+			glog.V(4).Infof("tlb service not initialized yet, ns: %s, name: %s", svc.Namespace, svc.Name)
 			continue
 		}
 		// get endpoints of the service
 		ep, err := c.endpointsLister.Endpoints(svc.Namespace).Get(svc.Name)
 		if err != nil {
-			glog.Warningf("get endpoints of service: %s error, err: %v", svc.Name, err)
+			glog.Warningf("get endpoints of service error, ns: %s, name: %s, err: %v", svc.Namespace, svc.Name, err)
 			continue
 		}
 		glog.V(4).Infof("got valid service, ns: %s, name: %s", svc.Namespace, svc.Name)
@@ -187,8 +177,8 @@ func (c *TLBController) onEndpointsAdd(obj interface{}) {
 		glog.Errorf("invalid obj type: %T", obj)
 		return
 	}
-	if !isTLBEndpoints(ep) {
-		glog.V(5).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
+	if !c.isTLBEndpoints(ep) {
+		glog.V(7).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
 		return
 	}
 	addrs := getPodAddrsFromEndpoints(ep)
@@ -197,18 +187,24 @@ func (c *TLBController) onEndpointsAdd(obj interface{}) {
 	c.tlbMapper.Update(addrs, "")
 }
 
-func isTLBEndpoints(ep *v1.Endpoints) bool {
+func (c *TLBController) isTLBEndpoints(ep *v1.Endpoints) bool {
+	if ep.Namespace != c.config.Namespace {
+		return false
+	}
 	for k := range ep.Labels {
-		if tlbLabelName == k {
+		if c.config.TLBLabelName == k {
 			return true
 		}
 	}
 	return false
 }
 
-func isTLBService(svc *v1.Service) bool {
+func (c *TLBController) isTLBService(svc *v1.Service) bool {
+	if svc.Namespace != c.config.Namespace {
+		return false
+	}
 	for k := range svc.Labels {
-		if tlbLabelName == k {
+		if c.config.TLBLabelName == k {
 			return true
 		}
 	}
@@ -221,8 +217,8 @@ func (c *TLBController) onEndpointsUpdate(oldObj, newObj interface{}) {
 		glog.Errorf("invalid obj type: %T", oldObj)
 		return
 	}
-	if !isTLBEndpoints(oldEp) {
-		glog.V(5).Infof("skip endpoints, ns: %s, name: %s", oldEp.Namespace, oldEp.Name)
+	if !c.isTLBEndpoints(oldEp) {
+		glog.V(7).Infof("skip endpoints, ns: %s, name: %s", oldEp.Namespace, oldEp.Name)
 		return
 	}
 	newEp, ok := newObj.(*v1.Endpoints)
@@ -243,8 +239,8 @@ func (c *TLBController) onEndpointsDelete(obj interface{}) {
 		glog.Errorf("invalid obj type: %T", obj)
 		return
 	}
-	if !isTLBEndpoints(ep) {
-		glog.V(5).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
+	if !c.isTLBEndpoints(ep) {
+		glog.V(7).Infof("skip endpoints, ns: %s, name: %s", ep.Namespace, ep.Name)
 		return
 	}
 	addrs := getPodAddrsFromEndpoints(ep)
@@ -271,8 +267,8 @@ func (c *TLBController) onServiceUpdate(oldObj, newObj interface{}) {
 		glog.Errorf("invalid obj type: %T", oldObj)
 		return
 	}
-	if !isTLBService(oldSvc) {
-		glog.V(5).Infof("skip service, ns: %s, name: %s", oldSvc.Namespace, oldSvc.Name)
+	if !c.isTLBService(oldSvc) {
+		glog.V(7).Infof("skip service, ns: %s, name: %s", oldSvc.Namespace, oldSvc.Name)
 		return
 	}
 	newSvc, ok := newObj.(*v1.Service)
@@ -286,7 +282,7 @@ func (c *TLBController) onServiceUpdate(oldObj, newObj interface{}) {
 		// get endpoints of the service
 		ep, err := c.endpointsLister.Endpoints(newSvc.Namespace).Get(newSvc.Name)
 		if err != nil {
-			glog.Errorf("get endpoints of service: %s error, err: %v", newSvc.Name, err)
+			glog.Errorf("get endpoints of service error, ns: %s, name: %s, err: %v", newSvc.Namespace, newSvc.Name, err)
 			return
 		}
 		podAddrs := getPodAddrsFromEndpoints(ep)

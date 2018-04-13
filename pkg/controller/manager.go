@@ -62,6 +62,7 @@ func (m *ProviderManager) register(key string) error {
 		return fmt.Errorf("provider is not exists")
 	}
 	provider.SetTimestamp()
+	glog.V(4).Infof("register provider %s", key)
 	return m.remoteRegistry.Register(provider)
 }
 
@@ -71,14 +72,16 @@ func (m *ProviderManager) unRegister(key string) error {
 		glog.Errorf("provider is not exists, %s", key)
 		return fmt.Errorf("provider is not exists")
 	}
+	glog.V(4).Infof("unregister provider %s", key)
 	return m.remoteRegistry.UnRegister(provider)
 }
 
-func (m *ProviderManager) listProviders(r registry.Interface, isConvertAddr bool) (sets.String, map[string]*dubbo.Provider) {
+func (m *ProviderManager) listProviders(r registry.Interface, isConvertAddr bool) (sets.String, map[string]*dubbo.Provider, error) {
+	glog.V(7).Infof("list providers")
 	urls, err := r.ListProviders()
 	if err != nil {
 		glog.Errorf("list providers error, %v", err)
-		return nil, nil
+		return nil, nil, err
 	}
 
 	set := sets.NewString()
@@ -92,12 +95,21 @@ func (m *ProviderManager) listProviders(r registry.Interface, isConvertAddr bool
 		set.Insert(provider.Key())
 		mapper[provider.Key()] = provider
 	}
-	return set, mapper
+	return set, mapper, nil
 }
 
 func (m *ProviderManager) Refresh() {
-	m.desiredProviders, m.localProvidersMapper = m.listProviders(m.localRegistry, true)
-	m.currentProviders, m.remoteProvidersMapper = m.listProviders(m.remoteRegistry, false)
+	var err error
+	m.desiredProviders, m.localProvidersMapper, err = m.listProviders(m.localRegistry, true)
+	if err != nil {
+		glog.Errorf("list local registry providers error, %v", err)
+		return
+	}
+	m.currentProviders, m.remoteProvidersMapper, err = m.listProviders(m.remoteRegistry, false)
+	if err != nil {
+		glog.Errorf("list remote registry providers error, %v", err)
+		return
+	}
 
 	created := m.desiredProviders.Difference(m.currentProviders)
 	deleted := m.currentProviders.Difference(m.desiredProviders)
@@ -113,6 +125,7 @@ func (m *ProviderManager) Refresh() {
 	for providerKey := range deleted {
 		m.unRegister(providerKey)
 	}
+	return
 }
 
 func (m *ProviderManager) Run(stopCh <-chan struct{}) {

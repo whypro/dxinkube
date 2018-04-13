@@ -33,4 +33,5 @@ spec:
         args:
         - '--local-zk-addrs=local-zookeeper'
         - '--remote-zk-addrs=remote-zookeeper'
+        - '--namespace=default'
         - '--glog-v=4'
